@@ -69,7 +69,7 @@ def calculate_priority(args):
     # assign positive scores to all edges selected by the greedy algorithm
     for i, e in enumerate(greedy_edges):
         assert e.matchable
-        edge_score_dict[e] = float(args.num_prescreen_edges) - i + 1
+        edge_score_dict[e] = len(greedy_edges) - i
 
     # write csv
     out_file = generate_filepath(args.out_dir, "prescreen_priority", "csv")
