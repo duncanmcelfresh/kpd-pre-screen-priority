@@ -77,7 +77,7 @@ def calculate_priority(args):
     with open(out_file, "w") as f:
         f.write("KPD_candidate_id,KPD_donor_id,prescreen_score\n")
         for e, score in edge_score_dict.items():
-            f.write(f"{int(e.data['donor_id'])},{int(e.data['patient_id'])},{int(score)}\n")
+            f.write(f"{int(e.data['patient_id'])},{int(e.data['donor_id'])},{int(score)}\n")
 
     logger.info("done.")
 
