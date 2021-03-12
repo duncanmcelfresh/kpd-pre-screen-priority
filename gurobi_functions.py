@@ -1,11 +1,10 @@
+# helper functions and constants for gurobi
 from gurobipy import *
 
 TIME_LIM = 18000  # 18,000s = 5 hours
 
 # MIP constants
 EPS_MIP = 1e-3
-EPS_SMALL = EPS_MIP
-M = 1e3
 
 
 def create_mip_model(time_lim=TIME_LIM, verbose=False, mipgap=None):

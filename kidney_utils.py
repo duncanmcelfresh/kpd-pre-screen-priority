@@ -1,8 +1,6 @@
 import kidney_ndds
 from kidney_digraph import *
 
-EPS = 0.00001
-
 
 class KidneyOptimException(Exception):
     pass

@@ -1,13 +1,13 @@
-import hashlib
-import json
 import logging
 import os
 import re
 import time
+import glob
+import pandas as pd
 
-import numpy as np
-
-from kpd_data import KPDData
+from graphstructure import GraphStructure
+from kidney_digraph import KidneyReadException, Digraph
+from kidney_ndds import NddEdge, Ndd
 
 LOG_FORMAT = "[%(asctime)-15s] [%(filename)s:%(funcName)s] : %(message)s"
 
@@ -26,76 +26,6 @@ def get_logger(logfile=None):
     return logger
 
 
-def stable_hash(x):
-    """hash a general python object by hashing its json representation. unlike hash() this is reproducible"""
-    hash_str = hashlib.md5(json.dumps(x).encode("utf-8")).hexdigest()
-    return hash_str, int(hash_str, 16)
-
-
-def edge_list_hash(edge_list):
-    """return the stable hash of a list of edges. this hash is reproducible, and does not depend on edge order"""
-    return stable_hash(sorted([e.hash_int for e in edge_list]))
-
-
-def query_node_hash(accepted_edges, rejected_edges, new_edge):
-    return stable_hash(
-        (
-            sorted([e.hash_int for e in accepted_edges]),
-            sorted([e.hash_int for e in rejected_edges]),
-            new_edge.hash_int,
-        )
-    )
-
-def outcome_node_hash(accepted_edges, rejected_edges):
-    return stable_hash(
-        (
-            sorted([e.hash_int for e in accepted_edges]),
-            sorted([e.hash_int for e in rejected_edges]),
-        )
-    )
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# kidney exchange helper functions
-# ----------------------------------------------------------------------------------------------------------------------
-
-def initialize_random_edge_weights(graph, rs_greedy):
-    add_uniform_probabilities(graph, 0.5, 1.0, 0.5)
-    for e in graph.all_edge_list:
-        e.weight = 100.0 + rs_greedy.uniform(1,10)
-
-    graph.init_optconfig()
-
-def add_kpd_probabilities(graph, rs):
-    """
-    input: graphstructure object
-
-    for each edge in graph.all_edge_list, set the following:
-
-    e.p_reject: U[0.25, 0.43] (according to UNOS estimates, mean = .34)
-
-    e.p_success_accept
-    - if e.sensitized: U[0.2, 0.5] (mean = .35)
-    - if not e.sensitized: U[0.9, 1.0] (mean = 0.95)
-
-    e.p_success_noquery
-    - if e.sensitized: U[0.0, 0.2] (mean = 0.1)
-    - if not e.sensitized: U[0.8, 0.9] (mean = 0.85)
-
-    the overall mean non-queried failure prob is roughly: 0.34 + (1 - 0.34) * 0.525 = 0.6865
-    overall mean success prob. is 0.3135
-    (assuming equal proportion sensitized and non-sensitized)
-    """
-    for e in graph.all_edge_list:
-        e.p_reject = rs.uniform(0.25, 0.43)
-        if graph.lookup_recip_sensitized(e.tgt.aux_id) == "Y":
-            e.p_success_accept = rs.uniform(0.2, 0.5)
-            e.p_success_noquery = rs.uniform(0.0, 0.2)
-        else:
-            e.p_success_accept = rs.uniform(0.9, 1.0)
-            e.p_success_noquery = rs.uniform(0.8, 0.9)
-
-
 def add_uniform_probabilities(graph, p_reject, p_success_accept, p_success_noquery):
     for e in graph.all_edge_list:
         e.p_reject = p_reject
@@ -103,113 +33,150 @@ def add_uniform_probabilities(graph, p_reject, p_success_accept, p_success_noque
         e.p_success_noquery = p_success_noquery
 
 
-def succeeded_failed_edges(edge_outcomes, queried_edges):
-    succeeded_edges = []
-    failed_edges = []
-    for e, o in zip(queried_edges, edge_outcomes):
-        if o:
-            succeeded_edges.append(e)
-        else:
-            failed_edges.append(e)
-    return succeeded_edges, failed_edges
+def read_unos_graph(directory, cycle_cap, chain_cap, logger=None):
+    """read a unos-format exchange, and return a list of kidney_ndd.Ndd objects and a kidney_digraph.Digraph object.
 
-
-def expected_matching_weight_noquery(sol, digraph, ndds):
-    """calculated expected weight of a kidney exchange solution, assuming no edges are queried"""
-    expected_weight = 0.0
-
-    # calculate expected cycle weight
-    for cycle in sol.cycle_obj:
-        total_wt = 0.0
-        total_prob = 1.0
-        for e in cycle.edges:
-            total_wt += e.weight
-            total_prob *= e.p_success_noquery
-
-        expected_weight += total_wt * total_prob
-
-    # calculate expected chain weight
-    for chain in sol.chains:
-        chain_success_prob = 1.0
-        chain_edges = chain.get_edge_objs(digraph, ndds)
-        chain_weight = 0.0
-        for e in chain_edges:
-            chain_success_prob *= e.p_success_noquery
-            chain_weight += e.weight * chain_success_prob
-        expected_weight += chain_weight
-
-    return expected_weight
-
-
-def get_matching_kpd_data(opt_solution, graph):
+    each unos-format exchange is contained in a subdirectory with the naming format 'KPD_CSV_IO_######'. Each exchange
+     subdirectory must contain a file with name ########_edgeweights.csv
     """
-    take a KEX solution, consisting of a list of cycles and a list of chains. return a populated KPDData object
-    """
+    # look for edge files
+    edge_files = glob.glob(os.path.join(directory, "*edgeweights.csv"))
 
-    kpd_data = KPDData()
+    name = os.path.basename(directory)
 
-    # keep track of matched vertices
-    matched_vs = []
-    # calculate expected cycle weight
-    for cycle in opt_solution.cycle_obj:
+    # there should only be one edgeweights file
+    if not len(edge_files) == 1:
+        raise KidneyReadException(
+            f"Directory {directory} contains {len(edge_files)} edgeweights files. "
+            f"Only one expected."
+        )
 
-        # increment abo counts for all donors/recips in the cycle
-        kpd_data.cycle_counts[len(cycle.edges)] += 1
-        for e in cycle.edges:
-            kpd_data.donor_abo[graph.lookup_donor_abo(e.data["donor_id"])] += 1
-            kpd_data.recip_abo[graph.lookup_recip_abo(e.tgt.aux_id)] += 1
-            matched_vs.append(e.tgt)
+    edge_filename = edge_files[0]
 
-            # increment the (recip, donor) abo for the pair at the source of the edge
-            recip_abo = graph.lookup_recip_abo(e.src.aux_id)
-            donor_abo = graph.lookup_donor_abo(e.data["donor_id"])
-            kpd_data.pair_abo[(recip_abo, donor_abo)] += 1
+    df = pd.read_csv(edge_filename)
 
-    # calculate expected chain weight
-    matched_ndds = []
-    for chain in opt_solution.chains:
-        chain_edges = chain.get_edge_objs(graph.graph, graph.altruists)
-        kpd_data.chain_counts[len(chain_edges)] += 1
-
-        ndd_donor = graph.altruists[chain_edges[0].src_id]
-        matched_ndds.append(ndd_donor)
-        ndd_donor_abo = graph.lookup_donor_abo(ndd_donor.aux_id)
-        kpd_data.ndd_abo[ndd_donor_abo] += 1
-
-        for e in chain_edges[1:]:
-            matched_vs.append(e.src)
-            # increment abo counts for donor and recip, and donor/recip pair of the source edge
-            src_recip_abo = graph.lookup_recip_abo(e.src.aux_id)
-            src_donor_abo = graph.lookup_donor_abo(e.data["donor_id"])
-            kpd_data.recip_abo[src_recip_abo] += 1
-            kpd_data.donor_abo[src_donor_abo] += 1
-            kpd_data.pair_abo[(src_recip_abo, src_donor_abo)] += 1
-        # increment abo counts for the final recipient in the chain
-        # (we ignore the final donors/pairs because they are not used)
-        kpd_data.recip_abo[graph.lookup_recip_abo(chain_edges[-1].tgt.aux_id)] += 1
-
-    # get bin counts for in/out degree
-    in_deg_list = [v.in_degree for v in matched_vs]
-    out_deg_list = [v.out_degree for v in matched_vs]
-    ndd_out_deg_list = [ndd.out_degree for ndd in matched_ndds]
-    kpd_data.in_deg_counts = np.histogram(in_deg_list, bins=KPDData.in_deg_bin_edges)[0]
-    kpd_data.out_deg_counts = np.histogram(
-        out_deg_list, bins=KPDData.out_deg_bin_edges
-    )[0]
-    kpd_data.ndd_out_deg_counts = np.histogram(
-        ndd_out_deg_list, bins=KPDData.out_deg_bin_edges
-    )[0]
-
-    highly_sensitized_list = [
-        graph.lookup_recip_sensitized(v.aux_id) for v in matched_vs
+    expected_columns = [
+        "KPD Match Run ID",
+        "KPD Candidate ID",
+        "Candidate's KPD Pair ID",
+        "KPD Donor ID",
+        "Donor's KPD Pair ID",
+        "Total Weight",
     ]
 
-    kpd_data.high_low_sensitized_count = [
-        sum(1 for sens in highly_sensitized_list if sens == "Y"),
-        sum(1 for sens in highly_sensitized_list if sens == "N"),
+    if not len(expected_columns) == len(df.columns):
+        raise KidneyReadException(
+            f"Edgeweights file {edge_filename} has {len(df.columns)} columns. "
+            f"Expected {len(expected_columns)}."
+        )
+
+    for i_col, expected in enumerate(expected_columns):
+        if not simple_string(expected) == simple_string(df.columns[i_col]):
+            raise KidneyReadException(
+                f"Column {(i_col + 1)} in *edgeweights.csv should be {simple_string(expected)}."
+                f"Instead we found column {simple_string(df.columns[i_col])}."
+            )
+
+    col_names = [
+        "match_run",
+        "patient_id",
+        "patient_pair_id",
+        "donor_id",
+        "donor_paired_patient_id",
+        "weight",
     ]
 
-    return kpd_data
+    df.columns = col_names
+
+    # last column is edge weights -- only take nonzero edges
+    nonzero_edges = df.loc[df["weight"] > 0]
+
+    # remove NDD edges
+    kpd_edges = nonzero_edges.loc[~nonzero_edges["donor_paired_patient_id"].isnull()]
+
+    # get unique vertex ids
+    # Note, in the *edgeweights.csv files:
+    # - "KPD Candidate ID" (or "patient_id" here) is the patient/recipient's UNOS ID
+    # - "Donor's KPD Pair ID" is the UNOS ID of the donor's associated patient (or None if the donor is an NDD)
+    vtx_id = set(
+        list(kpd_edges["patient_id"].unique())
+        + list(kpd_edges["donor_paired_patient_id"].unique())
+    )
+
+    vtx_count = len(vtx_id)
+    digraph = Digraph(vtx_count)
+
+    # vtx_index[id] gives the index in the digraph
+    vtx_index = dict(zip(vtx_id, range(len(vtx_id))))
+
+    warned = False
+    for index, row in kpd_edges.iterrows():
+        src_id = vtx_index[row["donor_paired_patient_id"]]
+        tgt_id = vtx_index[row["patient_id"]]
+        weight = row["weight"]
+        if src_id < 0 or src_id >= vtx_count:
+            raise KidneyReadException(f"Vertex index {src_id} out of range.")
+        if tgt_id < 0 or tgt_id >= vtx_count:
+            raise KidneyReadException(f"Vertex index {tgt_id} out of range.")
+        if src_id == tgt_id:
+            raise KidneyReadException(
+                f"Self-loop from {src_id} to {src_id} not permitted"
+            )
+        if digraph.edge_exists(digraph.vs[src_id], digraph.vs[tgt_id]) & ~warned:
+            print(f"# WARNING: Duplicate edge in file: {edge_filename}")
+            warned = True
+        if weight == 0:
+            raise KidneyReadException(f"Zero-weight edge from {src_id} to {tgt_id}")
+
+        digraph.add_edge(
+            weight,
+            digraph.vs[src_id],
+            digraph.vs[tgt_id],
+            edge_data={"donor_id": row["donor_id"], "patient_id": row["patient_id"]},
+        )
+
+    # now read NDDs - take only NDD edges
+    ndd_edges = nonzero_edges.loc[nonzero_edges["donor_paired_patient_id"].isnull()]
+    ndd_id = set(list(ndd_edges["donor_id"].unique()))
+
+    ndd_count = len(ndd_id)
+
+    if ndd_count > 0:
+        ndd_list = [Ndd(id=i) for i in range(ndd_count)]
+        ndd_index = dict(
+            zip(ndd_id, range(len(ndd_id)))
+        )  # ndd_index[id] gives the index in the digraph
+
+        # Keep track of which edges have been created already, to detect duplicates
+        edge_exists = [[False for v in digraph.vs] for ndd in ndd_list]
+
+        for index, row in ndd_edges.iterrows():
+            src_id = ndd_index[row["donor_id"]]
+            tgt_id = vtx_index[row["patient_pair_id"]]
+            weight = row["weight"]
+            if src_id < 0 or src_id >= ndd_count:
+                raise KidneyReadException(f"NDD index {src_id} out of range.")
+            if tgt_id < 0 or tgt_id >= digraph.n:
+                raise KidneyReadException(f"Vertex index {tgt_id} out of range.")
+
+            ndd_list[src_id].add_edge(
+                NddEdge(
+                    digraph.vs[tgt_id],
+                    weight,
+                    src_id=ndd_list[src_id].id,
+                    src=ndd_list[src_id],
+                    data={"donor_id": row["donor_id"], "patient_id": row["patient_id"]},
+                )
+            )
+            edge_exists[src_id][tgt_id] = True
+    else:
+        ndd_list = []
+
+    graph = GraphStructure(
+        digraph, ndd_list, cycle_cap, chain_cap, name=name, logger=logger
+    )
+
+    return graph
 
 
 # ----------------------------------------------------------------------------------------------------------------------

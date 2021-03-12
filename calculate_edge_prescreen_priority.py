@@ -1,10 +1,10 @@
+# main script for calculating edge priority
 import argparse
-import os
-
-from greedy_edge_choice import greedily_choose_edge_list_timelimit
-from kidney_graph_io import read_unos_graph_with_data, read_unos_graph
-from utils import get_logger, generate_filepath
 import numpy as np
+
+from edge_selection import greedily_choose_edge_list_timelimit
+from utils import read_unos_graph, add_uniform_probabilities
+from utils import get_logger, generate_filepath
 
 
 def calculate_priority(args):
@@ -44,10 +44,18 @@ def calculate_priority(args):
     logger = get_logger(logfile=generate_filepath(args.out_dir, "LOGS", "txt"))
     rs = np.random.RandomState(args.seed)
 
-    graph = read_unos_graph(args.kpd_dir, args.cycle_cap, args.chain_cap)
+    graph = read_unos_graph(args.kpd_dir, args.cycle_cap, args.chain_cap, logger=logger)
+
+    # add edge probabilities
+    # p_reject : probability an edge will be rejected during pre-screening
+    # p_success_accept : probability an edge will succeed if accepted during pre-screening
+    # p_success_accept : probability an edge will succeed if not pre-screened
+    add_uniform_probabilities(
+        graph, args.p_reject, args.p_success_accept, args.p_success_noquery
+    )
 
     # calculate edge importance using the greedy heuristic
-    logger.info("running greedy heuristic")
+    logger.info("running edge-selection function")
     graph.init_optconfig(edge_success_prob=args.edge_success_prob)
     greedy_edges = greedily_choose_edge_list_timelimit(
         graph,
@@ -77,7 +85,9 @@ def calculate_priority(args):
     with open(out_file, "w") as f:
         f.write("KPD_candidate_id,KPD_donor_id,prescreen_score\n")
         for e, score in edge_score_dict.items():
-            f.write(f"{int(e.data['patient_id'])},{int(e.data['donor_id'])},{int(score)}\n")
+            f.write(
+                f"{int(e.data['patient_id'])},{int(e.data['donor_id'])},{int(score)}\n"
+            )
 
     logger.info("done.")
 
@@ -136,14 +146,32 @@ def parse_args():
     parser.add_argument(
         "--time-limit",
         type=int,
-        default=3600,
+        default=12000,
         help="time limit for the greedy alg in seconds",
     )
     parser.add_argument(
         "--edge-success-prob",
         type=float,
+        default=1.0,
+        help="edge success probability used in PICEF by simulations",
+    )
+    parser.add_argument(
+        "--p-reject",
+        type=float,
+        default=0.1,
+        help="probability that an edge will be rejected during pre-screening",
+    )
+    parser.add_argument(
+        "--p-success-accept",
+        type=float,
+        default=0.8,
+        help="probability that an edge will succeed if pre-accepted",
+    )
+    parser.add_argument(
+        "--p-success-noquery",
+        type=float,
         default=0.5,
-        help="edge success probability used in simulations",
+        help="probability that an edge will succeed if not pre-screened",
     )
     return parser.parse_args()
 

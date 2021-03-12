@@ -1,20 +1,16 @@
 # implementation of the PICEF formulation, adapted from https://github.com/jamestrimble/kidney_solver
+import kidney_utils
 
 from gurobipy import *
-
-import kidney_utils
 from gurobi_functions import optimize, create_mip_model
 from kidney_digraph import Cycle, failure_aware_cycle_weight, cycle_weight
 
-###################################################################################################
-#                                                                                                 #
-#                                  Code used by all formulations                                  #
-#                                                                                                 #
-###################################################################################################
-
 
 class OptConfig(object):
-    """The inputs (problem instance and parameters) for an optimisation run
+    """
+    optimization configuration of a kidney exchange optimization problem
+
+    The inputs (problem instance and parameters) for an optimisation run
 
     Data members:
         digraph
@@ -57,7 +53,8 @@ class OptConfig(object):
 
 
 class OptSolution(object):
-    """An optimal solution for a kidney-exchange problem instance.
+    """
+    an optimal solution for a kidney exchange problem instance.
 
     Data members:
         ip_model: The Gurobi Model object
@@ -76,13 +73,10 @@ class OptSolution(object):
         digraph,
         edge_success_prob=1,
         infeasible=False,
-        robust_weight=0,
-        optimistic_weight=0,
         cycle_obj=None,
         cycle_cap=None,
         chain_cap=None,
         matching_edges=None,
-        alpha_var=None,
     ):
         self.ip_model = ip_model
         self.cycles = cycles
@@ -99,31 +93,13 @@ class OptSolution(object):
         self.edge_success_prob = edge_success_prob
         self.cycle_obj = cycle_obj
         self.matching_edges = matching_edges
-        self.robust_weight = robust_weight
-        self.optimistic_weight = optimistic_weight
         self.cycle_cap = cycle_cap
         self.chain_cap = chain_cap
-        self.alpha_var = alpha_var
 
         if ip_model is not None:
             self.timeout = ip_model.status == GRB.TIME_LIMIT
         else:
             self.timeout = False
-
-    def same_matching_edges(self, other):
-        if len(self.matching_edges) != len(other.matching_edges):
-            return False
-        for self_e in self.matching_edges:
-            edge_found = False
-            for other_e in other.matching_edges:
-                if (self_e.src_id == other_e.src_id) and (
-                    self_e.tgt.id == other_e.tgt.id
-                ):
-                    edge_found = True
-                    break
-            if not edge_found:
-                return False
-        return True
 
     def add_matching_edges(self, ndds):
         """Set attribute 'matching_edges' using self.cycle_obj, self.chains, and self.digraph"""
@@ -165,11 +141,7 @@ class OptSolution(object):
         self.matching_edges = matching_edges
 
 
-###################################################################################################
-#                                                                                                 #
-#                  Chain vars and constraints (used by HPIEF', HPIEF'' and PICEF)                 #
-#                                                                                                 #
-###################################################################################################
+# chain variables and constraints
 
 
 def add_chain_vars_and_constraints(
@@ -182,7 +154,7 @@ def add_chain_vars_and_constraints(
     store_edge_positions=False,
     check_edge_success=False,
 ):
-    """Add the IP variables and constraints for chains in PICEF and HPIEF'.
+    """Add the IP variables and constraints for chains in PICEF
 
     Args:
         ndds: a list of NDDs in the instance
@@ -259,23 +231,18 @@ def add_chain_vars_and_constraints(
         m.update()
 
 
-###################################################################################################
-#                                                                                                 #
-#                                              PICEF                                              #
-#                                                                                                 #
-###################################################################################################
+# PICEF model
 
 
 def create_picef_model(cfg, check_edge_success=False):
-    """Optimise using the PICEF formulation.
+    """
+    create the PICEF model
 
     Args:
         cfg: an OptConfig object
         check_edge_success: (bool). if True, check if each edge has e.success = False. if e.success=False, the edge cannot
             be used.
 
-    Returns:
-        an OptSolution object
     """
 
     cycles = cfg.digraph.find_cycles(cfg.max_cycle)
@@ -375,41 +342,6 @@ def create_picef_model(cfg, check_edge_success=False):
     cfg.cycles = cycles
     cfg.cycle_vars = cycle_vars
     cfg.cycle_list = cycle_list
-
-
-def optimize_picef(cfg, check_edge_success=False):
-    """create and solve a picef model, and return the solution"""
-
-    if cfg.m is None:
-        create_picef_model(cfg, check_edge_success=check_edge_success)
-
-    optimize(cfg.m)
-
-    if cfg.use_chains:
-        matching_chains = kidney_utils.get_optimal_chains(
-            cfg.digraph, cfg.ndds, cfg.edge_success_prob
-        )
-    else:
-        matching_chains = []
-
-    cycles_used = [c for c, v in zip(cfg.cycles, cfg.cycle_vars) if v.x > 0.5]
-    cycle_obj = [c for c in cfg.cycle_list if c.grb_var.x > 0.5]
-
-    sol = OptSolution(
-        ip_model=cfg.m,
-        cycles=cycles_used,
-        cycle_obj=cycle_obj,
-        chains=matching_chains,
-        digraph=cfg.digraph,
-        edge_success_prob=cfg.edge_success_prob,
-        cycle_cap=cfg.max_chain,
-        chain_cap=cfg.max_cycle,
-    )
-    sol.add_matching_edges(cfg.ndds)
-    kidney_utils.check_validity(
-        sol, cfg.digraph, cfg.ndds, cfg.max_cycle, cfg.max_chain
-    )
-    return cycle_obj, matching_chains, sol
 
 
 def solve_picef_model(cfg, remove_edges=[]):

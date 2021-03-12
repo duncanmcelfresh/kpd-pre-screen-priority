@@ -1,15 +1,5 @@
-"""This module has objects for non-directed donors (NDDs) and chains initiated by NDDs.
-
-In contrast to many kidney-exchange formulations, we do not include in the main directed
-graph a vertex for each NDD. Rather, the program maintains a separate array
-of Ndd objects. Each of these Ndd objects maintains a list of outgoing edges, and
-each of these edges points towards a vertex (which represents a donor-patient pair)
-in the directed graph.
-"""
-
-from kidney_digraph import KidneyReadException
-from utils import stable_hash
-
+# non-directed donor objects and edges
+from kidney_digraph import stable_hash
 
 class Ndd:
     """A non-directed donor"""
@@ -28,10 +18,6 @@ class Ndd:
         self.out_degree += 1
         self.edges.append(ndd_edge)
 
-    def remove_edge(self, ndd_edge):
-        """Remove the edge."""
-        self.edges.remove(ndd_edge)
-
     def get_edge(self, tgt_idx):
         """
         return the edge that points to vertex with id tgt_idx, if it exists
@@ -43,17 +29,6 @@ class Ndd:
             raise Warning("edge not found to target index %d" % tgt_idx)
         else:
             raise Warning("multiple edges found to target index %d" % tgt_idx)
-
-    def uniform_copy(self):
-        """
-        Return a copy of the ndd with all weights set to 1
-        """
-        n = Ndd(id=self.id)
-        for e in self.edges:
-            tgt = e.tgt
-            new_weight = 1.0
-            n.add_edge(NddEdge(tgt, new_weight, src_id=n.id, src=n))
-        return n
 
 
 class NddEdge:
@@ -103,103 +78,6 @@ class NddEdge:
 
     def __hash__(self):
         return self.hash_int
-
-    def to_dict(self):
-        e_dict = {
-            "type": "ndd_edge",
-            "weight": self.weight,
-            "discount": self.discount,
-            "discount_frac": self.discount_frac,
-            "src_id": self.src_id,
-            "tgt_id": self.tgt_id,
-            "sensitized": self.sensitized,
-        }
-        return e_dict
-
-    @classmethod
-    def from_dict(cls, e_dict, ndds):
-        # find NddEdge among provided ndds...
-        # THIS DOESN'T HAVE TO BE A NddEdge FUNCTION
-
-        # tgt = digraph.vs[e_dict['tgt_id']]
-        # e = cls(tgt, e_dict['weight'], discount=e_dict['discount'], discount_frac=e_dict['discount_frac'],src_id = e_dict['src_id'])
-        # return e
-
-        e_tgt_id = e_dict["tgt_id"]
-        for e in ndds[e_dict["src_id"]].edges:
-            if e.tgt_id == e_tgt_id:
-                return e
-        raise Warning("NddEdge not found")
-
-    def display(self):
-        # if gamma == 0:
-        #     return "NDD Edge: tgt=%d, weight=%f" % ( self.tgt.id, self.weight)
-        # else:
-        return (
-            "NDD Edge: tgt=%d, weight=%f, sens=%s, max_discount=%f, discount_frac=%f"
-            % (
-                self.tgt.id,
-                self.weight,
-                self.sensitized,
-                self.discount,
-                self.discount_frac,
-            )
-        )
-
-
-def create_relabelled_ndds(ndds, old_to_new_vtx):
-    """Creates a copy of a n array of NDDs, with target vertices changed.
-
-    If a target vertex in an original NDD had ID i, then the new target vertex
-    will be old_to_new_vtx[i].
-    """
-    new_ndds = [Ndd(id=ndd.id) for ndd in ndds]
-    for i, ndd in enumerate(ndds):
-        for edge in ndd.edges:
-            new_ndds[i].add_edge(
-                NddEdge(
-                    old_to_new_vtx[edge.tgt.id], edge.weight, src_id=ndd.id, src=ndd
-                )
-            )
-
-    return new_ndds
-
-
-def read_ndds(lines, digraph):
-    """Reads NDDs from an array of strings in the .ndd format."""
-
-    ndds = []
-    ndd_count, edge_count = [int(x) for x in lines[0].split()]
-    ndds = [Ndd(id=i) for i in range(ndd_count)]
-
-    # Keep track of which edges have been created already so that we can
-    # detect duplicates
-    edge_exists = [[False for v in digraph.vs] for ndd in ndds]
-
-    for line in lines[1 : edge_count + 1]:
-        tokens = [t for t in line.split()]
-        src_id = int(tokens[0])
-        tgt_id = int(tokens[1])
-        weight = float(tokens[2])
-        if src_id < 0 or src_id >= ndd_count:
-            raise KidneyReadException("NDD index {} out of range.".format(src_id))
-        if tgt_id < 0 or tgt_id >= digraph.n:
-            raise KidneyReadException("Vertex index {} out of range.".format(tgt_id))
-        if edge_exists[src_id][tgt_id]:
-            raise KidneyReadException(
-                "Duplicate edge from NDD {0} to vertex {1}.".format(src_id, tgt_id)
-            )
-        ndds[src_id].add_edge(
-            NddEdge(
-                digraph.vs[tgt_id], weight, src_id=ndds[src_id].id, src=ndds[src_id]
-            )
-        )
-        edge_exists[src_id][tgt_id] = True
-
-    if lines[edge_count + 1].split()[0] != "-1" or len(lines) < edge_count + 2:
-        raise KidneyReadException("Incorrect edge count")
-
-    return ndds
 
 
 class Chain(object):

@@ -1,11 +1,13 @@
-"""A Digraph class which can be used for representing donor-patient pairs
-(as vertices) and their compatibilities (as weighted edges), along with
-some related methods.
-Modified by Duncan from https://github.com/jamestrimble/kidney_solver
-"""
-from collections import deque
+# a Digraph class for kidney exchange, modified from https://github.com/jamestrimble/kidney_solver
+import hashlib
 import json
-from utils import stable_hash
+from collections import deque
+
+
+def stable_hash(x):
+    """hash a general python object by hashing its json representation. unlike hash() this is reproducible"""
+    hash_str = hashlib.md5(json.dumps(x).encode("utf-8")).hexdigest()
+    return hash_str, int(hash_str, 16)
 
 
 class KidneyReadException(Exception):
@@ -25,21 +27,6 @@ def cycle_weight(cycle, digraph):
     )
 
 
-def cycle_weight_weighted(cycle, digraph):
-    """Calculate the sum of a cycle's edge weights.
-
-    Args:
-        cycle: A list of Vertex objects in the cycle, with the first Vertex not repeated.
-        digraph: The digraph in which this cycle appears.
-    """
-
-    return sum(
-        digraph.adj_mat[cycle[i - 1].id][cycle[i].id].weight
-        * (1.0 + digraph.adj_mat[cycle[i - 1].id][cycle[i].id].alpha)
-        for i in range(len(cycle))
-    )
-
-
 def failure_aware_cycle_weight(cycle, digraph, edge_success_prob):
     """Calculate a cycle's total weight, with edge failures and no backarc recourse.
 
@@ -52,41 +39,6 @@ def failure_aware_cycle_weight(cycle, digraph, edge_success_prob):
 
     return sum(
         digraph.adj_mat[cycle[i - 1].id][cycle[i].id].weight for i in range(len(cycle))
-    ) * edge_success_prob ** len(cycle)
-
-
-def failure_aware_cycle_weight_weighted(cycle, digraph, edge_success_prob):
-    """Calculate a cycle's total weight, with edge failures and no backarc recourse.
-
-    Args:
-        cycle: A list of Vertex objects in the cycle, with the first Vertex not repeated.
-            UPDATE: cycle = a Cycle object
-        digraph: The digraph in which this cycle appears.
-        edge_success_prob: The problem that any given edge will NOT fail
-    """
-    return sum(
-        digraph.adj_mat[cycle[i - 1].id][cycle[i].id].weight
-        * (1.0 + digraph.adj_mat[cycle[i - 1].id][cycle[i].id].alpha)
-        for i in range(len(cycle))
-    ) * edge_success_prob ** len(cycle)
-
-
-def reg_failure_aware_cycle_weight(cycle, digraph, edge_success_prob, theta):
-    """Calculate a cycle's total weight, with edge failures and no backarc recourse.
-
-    Args:
-        cycle: A list of Vertex objects in the cycle, with the first Vertex not repeated.
-            UPDATE: cycle = a Cycle object
-        digraph: The digraph in which this cycle appears.
-        edge_success_prob: The problem that any given edge will NOT fail
-    """
-
-    return (
-        sum(
-            digraph.adj_mat[cycle[i - 1].id][cycle[i].id].weight
-            for i in range(len(cycle))
-        )
-        - theta * len(cycle)
     ) * edge_success_prob ** len(cycle)
 
 
@@ -122,29 +74,6 @@ class Cycle:
         self.discount_frac = 0
         self.edges = []
 
-    def to_dict(self):
-        cy_dict = {
-            "vs": [v.id for v in self.vs],
-            "discount_frac": self.discount_frac,
-            "weight": self.weight,
-        }
-        return cy_dict
-
-    def to_dict_dynamic(self):
-        """
-        for dynamic output, save different info
-        """
-        cy_dict = {"vs": [v.to_dict_dynamic() for v in self.vs], "weight": self.weight}
-        return cy_dict
-
-    @classmethod
-    def from_dict(cls, cy_dict, digraph):
-        cy = cls([digraph.vs[vi] for vi in cy_dict["vs"]])
-        cy.discount_frac = cy_dict["discount_frac"]
-        cy.weight = cy_dict["weight"]
-        cy.add_edges(digraph.es)
-        return cy
-
     def __cmp__(self, other):
         if min(self.vs) < min(other.vs):
             return -1
@@ -155,15 +84,6 @@ class Cycle:
 
     def __len__(self):
         return self.length
-
-    def display(self):
-        vtx_str = " ".join(str(v) for v in self.vs)
-        return "L=%2d; %15s; weight = %f; discount_frac = %f" % (
-            self.length,
-            vtx_str,
-            self.weight,
-            self.discount_frac,
-        )
 
     def contains_edge(self, e):
         if e.src in self.vs:
@@ -214,34 +134,6 @@ class Edge:
     def __hash__(self):
         return self.hash_int
 
-    def to_dict(self):
-        e_dict = {
-            "type": "pair_edge",
-            "id": self.id,
-            "weight": self.weight,
-            "discount": self.discount,
-            "src_id": self.src_id,
-            "tgt_id": self.tgt_id,
-            "sensitized": self.sensitized,
-        }
-        return e_dict
-
-    def display(self, gamma):
-        # if gamma == 0:
-        #     return "src=%d, tgt=%d, weight=%f" % (self.src.id, self.tgt.id, self.weight)
-        # else:
-        return (
-            "src=%d, tgt=%d, weight=%f, sens=%s, max_discount=%f, discount_frac=%f"
-            % (
-                self.src.id,
-                self.tgt.id,
-                self.weight,
-                self.sensitized,
-                self.discount,
-                self.discount_frac,
-            )
-        )
-
 
 class Digraph:
     """A directed graph, in which each edge has a numeric weight.
@@ -283,11 +175,6 @@ class Digraph:
         tgt.in_degree += 1
         self.adj_mat[source.id][tgt.id] = e
 
-    def remove_edge(self, e):
-        self.es.remove(e)
-        e.src.edges.remove(e)
-        self.adj_mat[e.src.id][e.tgt.id] = None
-
     def find_cycles(self, max_length):
         """Find cycles of length up to max_length in the digraph.
 
@@ -298,41 +185,6 @@ class Digraph:
         cycle_list = [cycle for cycle in self.generate_cycles(max_length)]
 
         return cycle_list
-
-    def write_cycles_to_file(self, cycle_file, max_length, cycle_list):
-        cycle_ind_list = [[v.id for v in c] for c in cycle_list]
-        # cycle_data = {'max_length': max_length, 'cycle_ind_list': cycle_ind_list}
-        maxlen_data = {"max_length": max_length}
-        # cycle_data = {'cycle_ind_list': cycle_ind_list}
-        with open(cycle_file, "wb") as f:
-            # json.dump(cycle_data, f, indent=4)
-            f.write(json.dumps(max_length))
-            f.write("\n")
-            for c in cycle_list:  # in cycle_ind_list:
-                f.write(json.dumps([v.id for v in c]))
-                f.write("\n")
-
-    def read_cycle_maxlen_from_file(self, cycle_file):
-        with open(cycle_file, "rb") as f:
-            max_length = json.loads(f.readline())
-        return max_length
-
-    def read_cycles_from_file(self, cycle_file, max_len):
-        """
-        Read cycle index lists from file, line by line.
-        Only read cycles that are <= max_len
-        """
-        cycle_ind_list = []
-        with open(cycle_file, "rb") as f:
-            max_length = json.loads(f.readline())
-            line = f.readline()
-            while line:
-                cycle_list = json.loads(line)
-                if len(cycle_list) <= max_len:
-                    cycle_ind_list.append(cycle_list)
-                line = f.readline()
-
-        return max_length, cycle_ind_list
 
     def generate_cycles(self, max_length):
         """Generate cycles of length up to max_length in the digraph.
@@ -379,32 +231,6 @@ class Digraph:
             for c in cycle([v]):
                 yield c
             vtx_used[v.id] = False
-
-    def get_shortest_path_from_low_vtx(self, low_vtx, max_path):
-        """ Returns an array of path lengths. For each v > low_vtx, if the shortest
-            path from low_vtx to v is shorter than max_path, then element v of the array
-            will be the length of this shortest path. Otherwise, element v will be
-            999999999."""
-        return self.calculate_shortest_path_lengths(
-            self.vs[low_vtx],
-            max_path,
-            adj_list_accessor=lambda v: (e.tgt for e in v.edges if e.tgt.id >= low_vtx),
-        )
-
-    def get_shortest_path_to_low_vtx(self, low_vtx, max_path):
-        """ Returns an array of path lengths. For each v > low_vtx, if the shortest
-            path to low_vtx from v is shorter than max_path, then element v of the array
-            will be the length of this shortest path. Otherwise, element v will be
-            999999999."""
-
-        def adj_list_accessor(v):
-            for i in range(low_vtx, len(self.vs)):
-                if self.adj_mat[i][v.id]:
-                    yield self.vs[i]
-
-        return self.calculate_shortest_path_lengths(
-            self.vs[low_vtx], max_path, adj_list_accessor=adj_list_accessor
-        )
 
     def calculate_shortest_path_lengths(
         self, from_v, max_dist, adj_list_accessor=lambda v: (e.tgt for e in v.edges)
