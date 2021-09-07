@@ -90,9 +90,12 @@ def calculate_priority(args):
         "prescreen_score",
     ]
 
+    # sort dict by score (decreasing)
+    final_edge_list = [(e, score) for e, score in sorted(edge_score_dict.items(), key=lambda x: x[1], reverse=True)]
+
     with open(out_file, "w") as f:
         f.write(",".join(cols) + "\n")
-        for e, score in edge_score_dict.items():
+        for e, score in final_edge_list:
             f.write(
                 f"{int(e.data['patient_id'])},"
                 f"{int(e.data['donor_id'])},"

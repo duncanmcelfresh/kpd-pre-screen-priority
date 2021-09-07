@@ -40,22 +40,28 @@ Edge pre-screen priority can be calculated by running the script `calculate_edge
 python -m calculate_edge_prescreen_priority.py --num-prescreen-edges 200 --out-dir /output/dir/ --kpd-dir /unos/data/KPD_CSV_IO_20160602
 ```
 
-And this will write two files: a log file, with path similar to `/output/dir/LOGS_###.txt`, and an edge priority file with path `/output/dir/prescreen_priority_###.csv`. (The "###" will be a string representing the date/time.)
+And this will write two files: a log file, with path similar to `/output/dir/LOGS_###.txt`, and an edge priority file with path `/output/dir/prescreen_priority_###.csv`. (The "###" will be a string representing the date/time.) Edges in the resulting CSV file will be sorted from highest-priority to lowest-priority.
 
 The prescreen priority file will look like the following:
 
 ```
-KPD_candidate_id,KPD_donor_id,prescreen_score
-200687,603360,-1
-203305,603974,0
-200460,600483,-1
-203653,601086,0
-203744,603807,-1
-203761,600977,-1
-200680,600543,42
-203766,604031,-1
-200679,600543,-1
+KPD_candidate_id,KPD_donor_id,candidate_ctr,donor_ctr,prescreen_score
+203746,603996,GAMC-TX1,MIUM-TX1,10
+203832,603651,MNHC-TX1,WISE-TX1,9
+203852,603867,MNAN-TX1,CASM-TX1,8
+203860,603863,FLFH-TX1,PALV-TX1,7
+203735,604002,TXTX-TX1,MNHC-TX1,6
+203832,604019,MNHC-TX1,NCBG-TX1,5
+203515,603895,WISE-TX1,TXTX-TX1,4
+203851,603910,FLFH-TX1,GAMC-TX1,3
+203829,604023,MIUM-TX1,FLFH-TX1,2
+203696,603917,CASM-TX1,NYFL-TX1,1
+203832,603986,MNHC-TX1,WISE-TX1,0
+203746,601221,GAMC-TX1,TXAS-TX1,0
 ...
+203829,601300,MIUM-TX1,PALV-TX1,-1
+203829,601305,MIUM-TX1,TXTX-TX1,-1
+203829,601329,MIUM-TX1,UTMC-TX1,-1
 ```
 
 Note that most edges will have score -1, meaning they cannot be matched.
