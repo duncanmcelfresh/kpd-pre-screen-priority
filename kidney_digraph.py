@@ -53,6 +53,7 @@ class Vertex:
         self.in_degree = 0
         self.out_degree = 0
         self.sensitized = False
+        self.data = {}
 
     def __str__(self):
         return "V{}".format(self.id)
@@ -71,7 +72,6 @@ class Cycle:
         self.vs = vs
         self.weight = 0
         self.length = len(vs)
-        self.discount_frac = 0
         self.edges = []
 
     def __cmp__(self, other):
@@ -102,11 +102,9 @@ class Cycle:
 class Edge:
     """An edge in a directed graph (see the Digraph class)."""
 
-    def __init__(self, id, weight, src, tgt, discount=0, fail=False, data={}):
+    def __init__(self, id, weight, src, tgt, data={}):
         self.id = id
         self.weight = weight  # edge weight
-        self.discount = discount  # maximum discount value for the robust case
-        self.fail = fail  # whether edge failed
         self.success = True
         self.src = src  # source vertex
         self.src_id = src.id

@@ -39,10 +39,12 @@ def read_unos_graph(directory, cycle_cap, chain_cap, logger=None):
     each unos-format exchange is contained in a subdirectory with the naming format 'KPD_CSV_IO_######'. Each exchange
      subdirectory must contain a file with name ########_edgeweights.csv
     """
-    # look for edge files
-    edge_files = glob.glob(os.path.join(directory, "*edgeweights.csv"))
-
     name = os.path.basename(directory)
+
+    # --- read edge data ---
+
+    # look for edge files - there should be only one
+    edge_files = glob.glob(os.path.join(directory, "*edgeweights.csv"))
 
     # there should only be one edgeweights file
     if not len(edge_files) == 1:
@@ -50,10 +52,9 @@ def read_unos_graph(directory, cycle_cap, chain_cap, logger=None):
             f"Directory {directory} contains {len(edge_files)} edgeweights files. "
             f"Only one expected."
         )
-
     edge_filename = edge_files[0]
 
-    df = pd.read_csv(edge_filename)
+    df_edges = pd.read_csv(edge_filename)
 
     expected_columns = [
         "KPD Match Run ID",
@@ -64,17 +65,17 @@ def read_unos_graph(directory, cycle_cap, chain_cap, logger=None):
         "Total Weight",
     ]
 
-    if not len(expected_columns) == len(df.columns):
+    if not len(expected_columns) == len(df_edges.columns):
         raise KidneyReadException(
-            f"Edgeweights file {edge_filename} has {len(df.columns)} columns. "
+            f"Edgeweights file {edge_filename} has {len(df_edges.columns)} columns. "
             f"Expected {len(expected_columns)}."
         )
 
     for i_col, expected in enumerate(expected_columns):
-        if not simple_string(expected) == simple_string(df.columns[i_col]):
+        if not simple_string(expected) == simple_string(df_edges.columns[i_col]):
             raise KidneyReadException(
                 f"Column {(i_col + 1)} in *edgeweights.csv should be {simple_string(expected)}."
-                f"Instead we found column {simple_string(df.columns[i_col])}."
+                f"Instead we found column {simple_string(df_edges.columns[i_col])}."
             )
 
     col_names = [
@@ -86,10 +87,88 @@ def read_unos_graph(directory, cycle_cap, chain_cap, logger=None):
         "weight",
     ]
 
-    df.columns = col_names
+    df_edges.columns = col_names
+
+    # --- read donor data ---
+
+    # look for donor files - there should be one
+    donor_files = glob.glob(os.path.join(directory, "*donor.csv"))
+
+    # there should only be one donor file
+    if not len(donor_files) == 1:
+        raise KidneyReadException(
+            f"Directory {directory} contains {len(donor_files)} donor files. "
+            f"Only one expected."
+        )
+
+    donor_filename = donor_files[0]
+
+    df_donor = pd.read_csv(donor_filename)
+    df_donor.columns = [simple_string(c) for c in df_donor.columns]
+
+    # only two fields are needed from donor data
+    required_donor_fields = [
+        "kpddonorid",
+        "homectr",
+    ]
+
+    for expected_col in required_donor_fields:
+        if expected_col not in df_donor.columns:
+            raise KidneyReadException(f"Column {expected_col} not found in *donor.csv")
+
+    # read recip id and transplant center into a dict
+    donor_ctr = {}
+    for index, row in df_donor.iterrows():
+        if row["kpddonorid"] in donor_ctr:
+            logger.info(
+                f"duplicate donors with id {row['kpddonorid']}, skipping the duplicates"
+            )
+        else:
+            donor_ctr[row["kpddonorid"]] = row["homectr"]
+
+    # --- read recipient data ---
+
+    # look for recipient files - there should be one
+    recip_files = glob.glob(os.path.join(directory, "*recipient.csv"))
+
+    # there should only be one recip file
+    if not len(recip_files) == 1:
+        raise KidneyReadException(
+            f"Directory {directory} contains {len(recip_files)} recipient files. "
+            f"Only one expected."
+        )
+
+    recip_filename = recip_files[0]
+
+    df_recip = pd.read_csv(recip_filename)
+    df_recip.columns = [simple_string(c) for c in df_recip.columns]
+
+    # only two fields are needed from recip data
+    required_recip_fields = [
+        "kpdcandidateid",
+        "transplantctr",
+    ]
+
+    for expected_col in required_recip_fields:
+        if not expected_col in df_recip.columns:
+            raise KidneyReadException(
+                f"Column {expected_col} not found in *recipient.csv"
+            )
+
+    # read recip id and transplant center into a dict
+    recip_ctr = {}
+    for index, row in df_recip.iterrows():
+        if row["kpdcandidateid"] in recip_ctr:
+            logger.info(
+                f"duplicate recipients with id {row['kpdcandidateid']}, skipping the duplicates"
+            )
+        else:
+            recip_ctr[row["kpdcandidateid"]] = row["transplantctr"]
+
+    # --- data preparation ---
 
     # last column is edge weights -- only take nonzero edges
-    nonzero_edges = df.loc[df["weight"] > 0]
+    nonzero_edges = df_edges.loc[df_edges["weight"] > 0]
 
     # remove NDD edges
     kpd_edges = nonzero_edges.loc[~nonzero_edges["donor_paired_patient_id"].isnull()]
@@ -172,9 +251,27 @@ def read_unos_graph(directory, cycle_cap, chain_cap, logger=None):
     else:
         ndd_list = []
 
+
+    vtd_id_from_index = {val: key for key, val in vtx_index.items()}
+    for i, v in enumerate(digraph.vs):
+        # add vertex center to v.data
+
+            # vtx_index[id] gives the index in the digraph
+            vtx_index = dict(zip(vtx_id, range(len(vtx_id))))
+
     graph = GraphStructure(
         digraph, ndd_list, cycle_cap, chain_cap, name=name, logger=logger
     )
+
+    # add donor and recip center data to each edge
+    for e in graph.all_edge_list:
+        if not e.data["donor_id"] in donor_ctr:
+            raise KidneyReadException(f"no center for donor id {e.data['donor_id']}")
+        if not e.data["patient_id"] in recip_ctr:
+            raise KidneyReadException(f"no center for patient id {e.data['patient_id']}")
+
+        e.data["patient_ctr"] = recip_ctr[e.data["patient_id"]]
+        e.data["donor_ctr"] = donor_ctr[e.data["donor_id"]]
 
     return graph
 

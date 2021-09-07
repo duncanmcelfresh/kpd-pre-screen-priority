@@ -6,11 +6,11 @@ class Ndd:
 
     def __init__(self, id=None, aux_id=None):
         self.edges = []
-        self.discount_frac = 0
         self.chain_weight = 0
         self.id = id
         self.aux_id = aux_id
         self.out_degree = 0
+        self.data = {}
 
     def add_edge(self, ndd_edge):
         """Add an edge representing compatibility with a patient who appears as a
@@ -38,9 +38,6 @@ class NddEdge:
         self,
         tgt,
         weight,
-        discount=0,
-        fail=False,
-        discount_frac=0,
         src_id=None,
         src=None,
         data={},
@@ -51,10 +48,7 @@ class NddEdge:
         self.tgt_id = tgt.id
         self.src_id = src_id
         self.weight = weight  # edge weight
-        self.discount = discount  # discount value for the robust case
-        self.fail = fail
         self.success = True
-        self.discount_frac = discount_frac
         self.sensitized = tgt.sensitized
         self.data = data
 
@@ -90,31 +84,14 @@ class Chain(object):
         edges: ordered list of the chain's edges
     """
 
-    def __init__(self, ndd_index, vtx_indices, weight):  # , chain_edges):
+    def __init__(self, ndd_index, vtx_indices, weight):
         self.ndd_index = ndd_index
         self.vtx_indices = vtx_indices
         self.weight = weight
-        self.discount_frac = 0.0
-        # self.edges = chain_edges
-
-    def to_dict(self):
-        ch_dict = {
-            "ndd_index": self.ndd_index,
-            "vtx_indices": self.vtx_indices,
-            "discount_frac": self.discount_frac,
-            "weight": self.weight,
-        }
-        return ch_dict
 
     @property
     def length(self):
         return len(self.vtx_indices)
-
-    @classmethod
-    def from_dict(cls, ch_dict):
-        ch = cls(ch_dict["ndd_index"], ch_dict["vtx_indices"], ch_dict["weight"])
-        ch.discount_frac = ch_dict["discount_frac"]
-        return ch
 
     def __repr__(self):
         return (
@@ -122,15 +99,6 @@ class Chain(object):
             + " ".join(str(v) for v in self.vtx_indices)
             + " with weight "
             + str(self.weight)
-        )
-
-    def display(self):
-        vtx_str = " ".join(str(v) for v in self.vtx_indices)
-        return "Ndd %d, vtx = %s; weight = %f, discount_frac = %f" % (
-            self.ndd_index,
-            vtx_str,
-            self.weight,
-            self.discount_frac,
         )
 
     def __cmp__(self, other):
@@ -172,49 +140,3 @@ class Chain(object):
             next_vtx = self.vtx_indices[i_src + 1]
             edges.append(digraph.adj_mat[curr_vtx][next_vtx])
         return edges
-
-    def get_weight(self, digraph, ndds, edge_success_prob):
-        # chain weight is equal to e1.weight * p + e2.weight * p**2 + ... + en.weight * p**n
-        ndd = ndds[self.ndd_index]
-        # find the vertex that the NDD first donates to
-        tgt_id = self.vtx_indices[0]
-        e1 = []
-        for e in ndd.edges:
-            if e.tgt.id == tgt_id:
-                # get edge...
-                e1 = e
-                break
-        if e1 == []:
-            print("chain.update_weight: could not find vertex id")
-        weight = e1.weight * edge_success_prob  # add weight from ndd to first pair
-        for j in range(len(self.vtx_indices) - 1):
-            weight += digraph.adj_mat[self.vtx_indices[j]][
-                self.vtx_indices[j + 1]
-            ].weight * edge_success_prob ** (j + 2)
-        return weight
-
-    def weight_after_failure(self, digraph, ndds):
-        ndd = ndds[self.ndd_index]
-        # find the vertex that the NDD first donates to
-        tgt_id = self.vtx_indices[0]
-        e1 = []
-        for e in ndd.edges:
-            if e.tgt.id == tgt_id:
-                # get edge...
-                e1 = e
-                break
-        if e1 == []:
-            raise Warning("could not find vertex id")
-        weight = 0
-        if e1.fail:
-            return weight
-        else:
-            weight += e1.weight  # add weight from ndd to first pair
-            for j in range(len(self.vtx_indices) - 1):
-                if digraph.adj_mat[self.vtx_indices[j]][self.vtx_indices[j + 1]].fail:
-                    return weight
-                else:
-                    weight += digraph.adj_mat[self.vtx_indices[j]][
-                        self.vtx_indices[j + 1]
-                    ].weight
-        return weight

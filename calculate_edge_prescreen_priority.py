@@ -82,11 +82,23 @@ def calculate_priority(args):
     # write csv
     out_file = generate_filepath(args.out_dir, "prescreen_priority", "csv")
 
+    cols = [
+        "KPD_candidate_id",
+        "KPD_donor_id",
+        "candidate_ctr",
+        "donor_ctr",
+        "prescreen_score",
+    ]
+
     with open(out_file, "w") as f:
-        f.write("KPD_candidate_id,KPD_donor_id,prescreen_score\n")
+        f.write(",".join(cols) + "\n")
         for e, score in edge_score_dict.items():
             f.write(
-                f"{int(e.data['patient_id'])},{int(e.data['donor_id'])},{int(score)}\n"
+                f"{int(e.data['patient_id'])},"
+                f"{int(e.data['donor_id'])},"
+                f"{e.data['patient_ctr']},"
+                f"{e.data['donor_ctr']},"
+                f"{int(score)}\n"
             )
 
     logger.info("done.")
@@ -109,7 +121,7 @@ def parse_args():
     """
     parser = argparse.ArgumentParser()
 
-    # example: --num-prescreen-edges 200 --out-dir ./output --kpd-dir /Users/duncan/research/graphs/kpd_zips/zips/KPD_CSV_IO_20160602
+    # example: --num-prescreen-edges 200 --out-dir ./output --kpd-dir /graphs/KPD_CSV_IO_20160602
 
     parser.add_argument(
         "--num-prescreen-edges",
