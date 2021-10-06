@@ -3,7 +3,7 @@ import argparse
 import numpy as np
 
 from edge_selection import greedily_choose_edge_list_timelimit
-from utils import read_unos_graph, add_uniform_probabilities
+from utils import read_new_format_unos_graph, add_uniform_probabilities
 from utils import get_logger, generate_filepath
 
 
@@ -44,7 +44,9 @@ def calculate_priority(args):
     logger = get_logger(logfile=generate_filepath(args.out_dir, "LOGS", "txt"))
     rs = np.random.RandomState(args.seed)
 
-    graph = read_unos_graph(args.kpd_dir, args.cycle_cap, args.chain_cap, logger=logger)
+    graph = read_new_format_unos_graph(
+        args.kpd_csv, args.cycle_cap, args.chain_cap, logger=logger
+    )
 
     # add edge probabilities
     # p_reject : probability an edge will be rejected during pre-screening
@@ -91,7 +93,12 @@ def calculate_priority(args):
     ]
 
     # sort dict by score (decreasing)
-    final_edge_list = [(e, score) for e, score in sorted(edge_score_dict.items(), key=lambda x: x[1], reverse=True)]
+    final_edge_list = [
+        (e, score)
+        for e, score in sorted(
+            edge_score_dict.items(), key=lambda x: x[1], reverse=True
+        )
+    ]
 
     with open(out_file, "w") as f:
         f.write(",".join(cols) + "\n")
@@ -99,8 +106,8 @@ def calculate_priority(args):
             f.write(
                 f"{int(e.data['patient_id'])},"
                 f"{int(e.data['donor_id'])},"
-                f"{e.data['patient_ctr']},"
-                f"{e.data['donor_ctr']},"
+                # f"{e.data['patient_ctr']},"
+                # f"{e.data['donor_ctr']},"
                 f"{int(score)}\n"
             )
 
@@ -133,14 +140,24 @@ def parse_args():
         help="number of edges we assume will be pre-screened. This should be large.",
     )
     parser.add_argument(
-        "--out-dir", type=str, default=None, help="directory for output",
-    )
-    parser.add_argument(
-        "--kpd-dir",
+        "--out-dir",
         type=str,
         default=None,
-        help="directory containing UNOS KPD match run files.  must contain one file with name suffix *edgeweights.csv",
+        help="directory for output",
     )
+    # parser.add_argument(
+    #     "--kpd-dir",
+    #     type=str,
+    #     default=None,
+    #     help="directory containing UNOS KPD match run files.  must contain one file with name suffix *edgeweights.csv",
+    # )
+    parser.add_argument(
+        "--kpd-csv",
+        type=str,
+        default=None,
+        help="a single CSV file containing new format match run info.",
+    )
+
     parser.add_argument("--chain-cap", type=int, default=4, help="chain cap")
     parser.add_argument("--cycle-cap", type=int, default=3, help="cycle cap")
     parser.add_argument("--seed", type=int, default=0, help="random seed")
