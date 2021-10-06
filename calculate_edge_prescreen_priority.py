@@ -87,8 +87,6 @@ def calculate_priority(args):
     cols = [
         "KPD_candidate_id",
         "KPD_donor_id",
-        "candidate_ctr",
-        "donor_ctr",
         "prescreen_score",
     ]
 
@@ -106,8 +104,6 @@ def calculate_priority(args):
             f.write(
                 f"{int(e.data['patient_id'])},"
                 f"{int(e.data['donor_id'])},"
-                # f"{e.data['patient_ctr']},"
-                # f"{e.data['donor_ctr']},"
                 f"{int(score)}\n"
             )
 
